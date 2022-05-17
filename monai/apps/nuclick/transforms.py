@@ -12,6 +12,49 @@ from monai.transforms import (
     Transform
 )
 
+from skimage.filters.thresholding import threshold_otsu
+from skimage.morphology import remove_small_holes, remove_small_objects
+
+
+def mask_percent(img_np):
+    if (len(img_np.shape) == 3) and (img_np.shape[2] == 3):
+        np_sum = img_np[:, :, 0] + img_np[:, :, 1] + img_np[:, :, 2]
+        mask_percentage = 100 - np.count_nonzero(np_sum) / np_sum.size * 100
+    else:
+        mask_percentage = 100 - np.count_nonzero(img_np) / img_np.size * 100
+    return mask_percentage
+
+def filter_green_channel(img_np, green_thresh=200, avoid_overmask=True, overmask_thresh=90, output_type="bool"):
+    g = img_np[:, :, 1]
+    gr_ch_mask = (g < green_thresh) & (g > 0)
+    mask_percentage = mask_percent(gr_ch_mask)
+    if (mask_percentage >= overmask_thresh) and (green_thresh < 255) and (avoid_overmask is True):
+        new_green_thresh = math.ceil((255 - green_thresh) / 2 + green_thresh)
+        gr_ch_mask = filter_green_channel(img_np, new_green_thresh, avoid_overmask, overmask_thresh, output_type)
+    return gr_ch_mask
+
+
+def filter_grays(rgb, tolerance=15):
+    rg_diff = abs(rgb[:, :, 0] - rgb[:, :, 1]) <= tolerance
+    rb_diff = abs(rgb[:, :, 0] - rgb[:, :, 2]) <= tolerance
+    gb_diff = abs(rgb[:, :, 1] - rgb[:, :, 2]) <= tolerance
+    return ~(rg_diff & rb_diff & gb_diff)
+
+
+def filter_ostu(img):
+    mask = np.dot(img[..., :3], [0.2125, 0.7154, 0.0721]).astype(np.uint8)
+    mask = 255 - mask
+    return mask > threshold_otsu(mask)
+
+
+def filter_remove_small_objects(img_np, min_size=3000, avoid_overmask=True, overmask_thresh=95):
+    rem_sm = remove_small_objects(img_np.astype(bool), min_size=min_size)
+    mask_percentage = mask_percent(rem_sm)
+    if (mask_percentage >= overmask_thresh) and (min_size >= 1) and (avoid_overmask is True):
+        new_min_size = round(min_size / 2)
+        rem_sm = filter_remove_small_objects(img_np, new_min_size, avoid_overmask, overmask_thresh)
+    return rem_sm
+
 class FlattenLabeld(MapTransform):
     def __call__(self, data):
         d = dict(data)
@@ -103,6 +146,27 @@ class SplitLabeld(Transform):
                     res[stat.coords[:, 0], stat.coords[:, 1]] = l
         return res
 
+class FilterImaged(MapTransform):
+    def __init__(self, keys: KeysCollection, min_size=500):
+        super().__init__(keys)
+        self.min_size = min_size
+
+    def filter(self, rgb):
+        mask_not_green = filter_green_channel(rgb)
+        mask_not_gray = filter_grays(rgb)
+        mask_gray_green = mask_not_gray & mask_not_green
+        mask = (
+            filter_remove_small_objects(mask_gray_green, min_size=self.min_size) if self.min_size else mask_gray_green
+        )
+
+        return rgb * np.dstack([mask, mask, mask])
+
+    def __call__(self, data):
+        d = dict(data)
+        for key in self.keys:
+            img = d[key]
+            d[key] = self.filter(img)
+        return d
 
 class AddPointGuidanceSignald(RandomizableTransform):
     def __init__(self, image="image", label="label", others="others", drop_rate=0.5, jitter_range=3):

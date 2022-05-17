@@ -1,5 +1,5 @@
 import os
-import tqdm
+from tqdm import tqdm
 import numpy as np
 
 def split_pannuke_dataset(image, label, output_dir, groups):
