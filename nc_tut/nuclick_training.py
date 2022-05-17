@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 import os
@@ -38,7 +39,7 @@ from monai.transforms import (
     Transform,
 )
 
-from monai.apps.nuclick.dataset_prep import split_pannuke_dataset
+from monai.apps.nuclick.dataset_prep import split_pannuke_dataset, split_nuclei_dataset
 from monai.apps.nuclick.transforms import (
     FlattenLabeld,
     ExtractPatchd,
@@ -56,6 +57,7 @@ def main():
     img_data_path = os.path.normpath('/scratch/pan_nuke_data/fold_1/Fold_1/images/fold1/images.npy')
     label_data_path = os.path.normpath('/scratch/pan_nuke_data/fold_1/Fold_1/masks/fold1/masks.npy')
     dataset_path = os.path.normpath('/home/vishwesh/nuclick_experiments/try_1/data')
+    json_path = os.path.normpath('/home/vishwesh/nuclick_experiments/try_1/data_list.json')
 
     groups = [
               "Neoplastic cells",
@@ -65,15 +67,30 @@ def main():
               "Epithelial",
         ]
 
-    # Create Dataset
-    dataset_json = split_pannuke_dataset(image=img_data_path,
-                                         label=label_data_path,
-                                         output_dir=dataset_path,
-                                         groups=groups)
-
-    # Transforms
+    #Hyper-params
     patch_size = 128
     min_area = 5
+
+    # Create Dataset
+    if os.path.isfile(json_path) == 0:
+        dataset_json = split_pannuke_dataset(image=img_data_path,
+                                             label=label_data_path,
+                                             output_dir=dataset_path,
+                                             groups=groups)
+
+        with open(json_path, 'w') as j_file:
+            json.dump(dataset_json, j_file)
+        j_file.close()
+    else:
+        with open(json_path, 'r') as j_file:
+            dataset_json = json.load(j_file)
+        j_file.close()
+
+    ds_json_new = []
+    for d in tqdm(dataset_json):
+        ds_json_new.extend(split_nuclei_dataset(d, min_area=min_area))
+
+    # Transforms
     train_pre_transforms = Compose(
         [
             LoadImaged(keys=("image", "label"), dtype=np.uint8),
@@ -104,7 +121,7 @@ def main():
 
 
     # Define Dataset & Loading
-    data_set = Dataset(dataset_json, transform=train_pre_transforms)
+    data_set = Dataset(ds_json_new, transform=train_pre_transforms)
     train_data_loader = DataLoader(
                                    dataset=data_set,
                                    batch_size=8,
@@ -140,8 +157,7 @@ def main():
         epoch_loss += loss.item()
         optimizer.step()
         optimizer.zero_grad()
-        print("Training ({0:%d} / {1:%d} Steps) (loss={2:%2.5f})".format(step, len(train_data_loader), loss))
-
+        print(f"Training ({step} / {len(train_data_loader)} Steps) (loss={loss})")
 
     print('Debug here')
 

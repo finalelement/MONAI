@@ -1,6 +1,11 @@
 import os
+import cv2
+import math
+import copy
 from tqdm import tqdm
 import numpy as np
+from skimage.measure import regionprops
+from monai.transforms import LoadImage
 
 def split_pannuke_dataset(image, label, output_dir, groups):
     groups = groups if groups else dict()
@@ -54,4 +59,29 @@ def split_pannuke_dataset(image, label, output_dir, groups):
         np.save(label_file, label_np)
         dataset_json.append({"image": image_file, "label": label_file})
 
+    return dataset_json
+
+def split_nuclei_dataset(d, centroid_key="centroid", mask_value_key="mask_value", min_area=5):
+    dataset_json = []
+
+    mask = LoadImage(image_only=True, dtype=np.uint8)(d["label"])
+    _, labels, _, _ = cv2.connectedComponentsWithStats(mask, 4, cv2.CV_32S)
+
+    stats = regionprops(labels)
+    for stat in stats:
+        if stat.area < min_area:
+            #logger.debug(f"++++ Ignored label with smaller area => ( {stat.area} < {min_area})")
+            print(f"++++ Ignored label with smaller area => ( {stat.area} < {min_area})")
+            continue
+
+        x, y = stat.centroid
+        x = int(math.floor(x))
+        y = int(math.floor(y))
+
+        item = copy.deepcopy(d)
+        item[centroid_key] = (x, y)
+        item[mask_value_key] = stat.label
+
+        # logger.info(f"{d['label']} => {len(stats)} => {mask.shape} => {stat.label}")
+        dataset_json.append(item)
     return dataset_json
