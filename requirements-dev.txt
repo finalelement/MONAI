@@ -1,6 +1,7 @@
 # Full requirements for developments
 -r requirements-min.txt
 pytorch-ignite==0.4.8
+opencv-python==4.5.5.64
 gdown>=3.6.4
 scipy
 itk>=5.2

@@ -12,6 +12,7 @@ from tqdm import tqdm
 #from lib.transforms import FilterImaged
 #from lib.utils import split_dataset, split_nuclei_dataset
 from monai.config import KeysCollection
+from monai.engines import SupervisedTrainer
 from monai.handlers import MeanDice, from_engine
 from monai.inferers import SimpleInferer
 from monai.losses import DiceLoss
@@ -119,6 +120,7 @@ def main():
         ]
     )
 
+
     # Define Dataset & Loading
     data_set = Dataset(ds_json_new, transform=train_pre_transforms)
     train_data_loader = DataLoader(
@@ -129,7 +131,7 @@ def main():
                                 )
 
     # Network Definition, Optimizer etc
-    device = 'cuda'
+    device = torch.device("cuda")
 
     network = BasicUNet(
         spatial_dims=2,
@@ -144,8 +146,27 @@ def main():
 
     # Training Process
     #TODO Consider uisng the Supervised Trainer over here from MONAI
-    network.train()
+    #network.train()
+    #TODO Refer here for how to fix up a validation when using a SupervisedTrainer. In short a supervisedevaluator needs to be created as a
+    # training handler
+    #TODO https://github.com/Project-MONAI/tutorials/blob/bc342633bd8e50be7b4a67b723006bb03285f6ba/acceleration/distributed_training/unet_training_workflows.py#L187
+    trainer = SupervisedTrainer(
+        device=device,
+        max_epochs=2,
+        train_data_loader=train_data_loader,
+        network=network,
+        optimizer=optimizer,
+        loss_function=dice_loss,
+        inferer=SimpleInferer(),
+        # if no FP16 support in GPU or PyTorch version < 1.6, will not enable AMP evaluation
+        amp=False,
+        postprocessing=train_post_transforms,
+        #key_train_metric={"train_acc": Accuracy(output_transform=from_engine(["pred", "label"]), device=device)},
+        #train_handlers=train_handlers,
+    )
+    trainer.run()
 
+    '''
     epoch_loss = 0
     for step, batch in enumerate(train_data_loader):
         step += 1
@@ -157,6 +178,7 @@ def main():
         optimizer.step()
         optimizer.zero_grad()
         print(f"Training ({step} / {len(train_data_loader)} Steps) (loss={loss})")
+    '''
 
     print('Debug here')
 
